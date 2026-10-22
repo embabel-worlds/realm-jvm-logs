@@ -23,6 +23,11 @@ A JVM application's logs and stack traces, read to the code that failed. Nothing
 | `JvmLogFailures` | which failures the logs recorded, how often, first and last seen |
 | `JvmLogFailureCode` | the root cause and code behind each logged failure (or one fingerprint) |
 | `JvmLogLevels` | events by severity and logger, and how many carried a trace |
+| `JvmFailureCallers` | every other caller of each method that failed, and which one the failure came through |
+| `JvmThrowSiteCoverage` | per root-cause exception, how many places the jar throws it and how many the logs have seen fail |
+| `JvmUnseenThrowSites` | each place the jar constructs one exception, its message as written, seen failing or not |
+| `JvmFailureLocals` | the locals declared in each failing method before the failing line |
+| `JvmFailingMethodShape` | each failing method's length, calls, field accesses and locals |
 
 ## Requires
 

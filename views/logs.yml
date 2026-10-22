@@ -79,3 +79,95 @@
     RETURN e.severity AS severity, e.logger AS logger, count(*) AS events,
            sum(CASE WHEN e.hasTrace THEN 1 ELSE 0 END) AS withTrace, max(e.timestamp) AS last
     ORDER BY events DESC
+
+# Failures read against the whole jar: the call graph, every throw site and the shape of the
+# methods that failed. Each starts from the logs, so it answers for the failures actually seen.
+
+- name: JvmFailureCallers
+  description: >-
+    Who else calls the methods that failed: for each logged failure, the method its first frame in a
+    jar was in, every call to it from the jar's code, and whether the failure came through that
+    caller (`onFailingPath`) - the other callers are paths that have not failed yet. A method with
+    overloads is the one declared last at or before the failing line.
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {firstInJar: true, depth: 0})
+    MATCH (f)-[:IN_TYPE]->(t:JavaType)-[:DECLARES_METHOD]->(m:JavaMethod) WHERE m.name = f.method AND m.line <= f.line
+    WITH e, f, m ORDER BY m.line DESC
+    WITH e, f, head(collect(m)) AS m
+    MATCH (e)-[:HAS_FRAME]->(tf:JavaStackFrame {depth: 0})
+    WITH e, f, m, collect(tf.className + '.' + tf.method) AS path
+    MATCH (m)-[:CALLED_BY]->(c:JavaMethodCall)
+    OPTIONAL MATCH (c)-[:AT_SITE]->(site:JavaCallSite)
+    RETURN DISTINCT f.exception AS exception, f.className + '.' + f.method AS failed, f.line AS failedLine, m.key AS method,
+           split(c.caller, '(')[0] AS caller, c.firstLine AS callLine, split(c.caller, '(')[0] IN path AS onFailingPath,
+           site.text AS call, c.sourceKey AS source
+    ORDER BY failed, onFailingPath DESC, caller
+
+- name: JvmThrowSiteCoverage
+  description: >-
+    How much of a failure the logs have seen: for each exception the logs name as a root cause, how
+    many places in the jar construct it and at how many of those the logs show it failing. A large
+    gap is code that throws the same way and has not been seen to.
+  params:
+    jar: { type: string, description: "The application's jar under data/, e.g. `jars/app-1.0.jar`." }
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true})
+    WITH collect(DISTINCT f.className + ':' + toString(f.line)) AS seen, collect(DISTINCT e.rootCause) AS causes
+    UNWIND causes AS cause
+    MATCH (j:Jar {path: $jar})-[:HAS_CALL]->(c:JavaMethodCall {calleeName: '<init>'}) WHERE c.calleeOwner = cause
+    WITH cause, c, any(l IN c.lines WHERE c.callerOwner + ':' + toString(l) IN seen) AS seenFailing
+    RETURN cause AS exception, count(*) AS throwSites, sum(CASE WHEN seenFailing THEN 1 ELSE 0 END) AS seenFailing,
+           collect(CASE WHEN seenFailing THEN split(c.caller, '(')[0] END) AS failedIn
+    ORDER BY throwSites DESC
+
+- name: JvmUnseenThrowSites
+  description: >-
+    Every place the jar constructs one exception, with the message it would carry as written, and
+    whether the logs have seen it fail there - the ones not seen are where the same failure is
+    still waiting.
+  params:
+    jar: { type: string, description: "The application's jar under data/." }
+    exception: { type: string, description: "Binary name of the exception, e.g. `java.lang.IllegalStateException` (from JvmThrowSiteCoverage)." }
+    limit: { type: int, default: 50, description: "Maximum sites." }
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true})
+    WITH collect(DISTINCT f.className + ':' + toString(f.line)) AS seen
+    MATCH (j:Jar {path: $jar})-[:HAS_CALL]->(c:JavaMethodCall {calleeOwner: $exception, calleeName: '<init>'})
+    OPTIONAL MATCH (c)-[:AT_SITE]->(site:JavaCallSite)
+    WITH c, site, any(l IN c.lines WHERE c.callerOwner + ':' + toString(l) IN seen) AS seenFailing
+    RETURN seenFailing, split(c.caller, '(')[0] AS method, c.lines AS lines, site.arguments AS message, site.url AS url, c.sourceKey AS source
+    ORDER BY seenFailing DESC, method
+    LIMIT $limit
+
+- name: JvmFailureLocals
+  description: >-
+    The locals declared in each failing method before the failing line, with their types as written
+    and what they were given - the values to log or inspect next time. Declared before the line is
+    not proof of being in scope there: a block or pattern variable may have ended.
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {firstInJar: true})
+    MATCH (f)-[:HAS_LOCAL]->(l:JavaLocal) WHERE l.line <= f.line
+    WITH DISTINCT f.exception AS exception, f.className + '.' + f.method AS failed, f.line AS failedLine,
+         l.line AS line, l.kind AS kind, l.declaredType AS type, l.name AS name, l.initializer AS initializer
+    RETURN exception, failed, failedLine, line, kind, type, name, initializer
+    ORDER BY failed, line
+
+- name: JvmFailingMethodShape
+  description: >-
+    The shape of each method a logged failure ran through in the jar: its length in lines, the calls
+    it makes, the field reads and writes, and its locals - whether failures sit in the long, busy
+    methods. `sourceMatches` false means the source read is not the jar's version.
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true, depth: 0})
+    MATCH (f)-[:IN_TYPE]->(t:JavaType)-[:DECLARES_METHOD]->(m:JavaMethod) WHERE m.name = f.method AND m.line <= f.line
+    WITH f, m ORDER BY m.line DESC
+    WITH f, head(collect(m)) AS m
+    OPTIONAL MATCH (f)-[:DECLARED_AT]->(d:JavaDeclaration)
+    OPTIONAL MATCH (m)-[:MAKES_CALL]->(c:JavaMethodCall)
+    WITH f, m, d, count(DISTINCT c) AS calls
+    OPTIONAL MATCH (m)-[:MAKES_ACCESS]->(a:JavaFieldAccess)
+    WITH f, m, d, calls, count(DISTINCT a) AS fieldAccesses
+    OPTIONAL MATCH (f)-[:HAS_LOCAL]->(l:JavaLocal)
+    WITH m, d, calls, fieldAccesses, count(DISTINCT l) AS locals, collect(DISTINCT f.exception) AS exceptions
+    RETURN m.key AS method, d.toLine - d.fromLine + 1 AS lines, calls, fieldAccesses, locals, exceptions, d.matches AS sourceMatches
+    ORDER BY lines DESC
