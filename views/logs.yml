@@ -1,0 +1,81 @@
+# Questions answered from logs and stack traces, read to the code. No view names a library or an
+# application: what a trace touches is whatever the jars under data/jars compiled.
+
+- name: JvmStackTraceCode
+  description: >-
+    The offending code for a Java stack trace: each throwable in it (thrown, causes, suppressed),
+    with every frame in a jar under data/jars, the method's whole declaration and the lines it was
+    on. `offending` marks each throwable's first frame in a jar - read those first.
+  params:
+    trace: { type: string, description: "The stack trace, as printed." }
+  cypher: |
+    MATCH (t:StackTrace {text: $trace})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true})
+    OPTIONAL MATCH (f)-[:SOURCE_AT]->(s:SourceSpan)
+    OPTIONAL MATCH (f)-[:DECLARED_AT]->(d:JavaDeclaration)
+    RETURN f.exceptionIndex AS exceptionIndex, f.relation AS relation, f.depth AS depth, f.exception AS exception, f.frame AS frame,
+           f.firstInJar AS offending, f.className + '.' + f.method AS method, f.line AS line,
+           d.matches AS sourceMatches, s.text AS lines, d.signature AS declaration, d.fromLine AS fromLine,
+           d.toLine AS toLine, d.text AS code, f.jarPath AS jar
+    ORDER BY exceptionIndex, frame
+
+- name: JvmStackTraceSummary
+  description: >-
+    What a Java stack trace says, throwable by throwable: the exception and its message, whether it
+    is the root cause, where it was thrown, and the first frame in a jar under data/jars with the
+    lines around it.
+  params:
+    trace: { type: string, description: "The stack trace, as printed." }
+  cypher: |
+    MATCH (t:StackTrace {text: $trace})-[:HAS_EXCEPTION]->(x:JavaThrowable)
+    OPTIONAL MATCH (x)-[:SOURCE_AT]->(s:SourceSpan)
+    OPTIONAL MATCH (x)-[:DECLARED_AT]->(d:JavaDeclaration)
+    RETURN x.index AS index, x.relation AS relation, x.depth AS depth, x.parentIndex AS of, x.exception AS exception,
+           x.message AS message, x.isRootCause AS rootCause, x.topFrame AS thrownAt, x.jarFrame AS inYourCode,
+           x.jarFrameLine AS line, x.frameCount AS frames, x.elided AS elided, d.signature AS inMethod,
+           d.matches AS sourceMatches, s.text AS code
+    ORDER BY index
+
+- name: JvmLogFailures
+  description: >-
+    The failures the logs recorded, grouped by fingerprint (same exception, same root cause, same
+    frames): how often each happened, first and last seen, the loggers that reported it and where
+    in the logs. The most frequent first.
+  params:
+    limit: { type: int, default: 25, description: "Maximum failures." }
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})
+    WITH e.fingerprint AS fingerprint, e.exception AS exception, e.rootCause AS rootCause,
+         count(*) AS occurrences, min(e.timestamp) AS firstSeen, max(e.timestamp) AS lastSeen,
+         collect(DISTINCT e.logger) AS loggers, collect(e.path + ':' + toString(e.line)) AS at
+    RETURN fingerprint, exception, rootCause, occurrences, firstSeen, lastSeen, loggers, at[0..5] AS where
+    ORDER BY occurrences DESC, lastSeen DESC
+    LIMIT $limit
+
+- name: JvmLogFailureCode
+  description: >-
+    The code behind the failures in the logs: for each logged exception (or the one fingerprint
+    asked for), the root cause, the first frame of it in a jar under data/jars, and the lines there.
+  params:
+    fingerprint: { type: string, default: "", description: "One failure's fingerprint (from JvmLogFailures); empty = every logged failure." }
+    limit: { type: int, default: 25, description: "Maximum events." }
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})
+    WHERE $fingerprint = '' OR e.fingerprint = $fingerprint
+    MATCH (e)-[:HAS_EXCEPTION]->(x:JavaThrowable {isRootCause: true})
+    OPTIONAL MATCH (x)-[:SOURCE_AT]->(s:SourceSpan)
+    OPTIONAL MATCH (x)-[:DECLARED_AT]->(d:JavaDeclaration)
+    RETURN e.timestamp AS at, e.path + ':' + toString(e.line) AS logLine, e.logger AS logger, e.message AS logged,
+           x.exception AS rootCause, x.message AS message, x.jarFrame AS inYourCode, x.jarFrameLine AS line,
+           d.signature AS inMethod, d.matches AS sourceMatches, s.text AS code, e.fingerprint AS fingerprint
+    ORDER BY at DESC
+    LIMIT $limit
+
+- name: JvmLogLevels
+  description: >-
+    The logs by severity and logger: how many events each logger wrote at each level, and how many
+    carried a stack trace - where the noise and the failures come from.
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent)
+    RETURN e.severity AS severity, e.logger AS logger, count(*) AS events,
+           sum(CASE WHEN e.hasTrace THEN 1 ELSE 0 END) AS withTrace, max(e.timestamp) AS last
+    ORDER BY events DESC

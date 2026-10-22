@@ -1,0 +1,99 @@
+# Logs and stack traces, read to code. Every node is VIRTUAL.
+#
+#   AssistantUser ─HAS_LOG_EVENT▶ LogEvent                  (data/logs/**, one row per event)
+#   StackTrace {text: $trace} ─HAS_EXCEPTION▶ JavaThrowable  (a pasted trace; StackTrace is a literal anchor)
+#   StackTrace / LogEvent ─HAS_FRAME▶ JavaStackFrame
+#   LogEvent ─HAS_EXCEPTION▶ JavaThrowable
+#
+# and on into realm-java-code and realm-java-source-code, by the keys a frame carries when a jar
+# under data/jars compiled its class (spelled as that jar's own rows spell them):
+#
+#   JavaStackFrame ─IN_TYPE▶ JavaType    JavaStackFrame ─DECLARED_AT▶ JavaDeclaration (the whole method)
+#   JavaStackFrame / JavaThrowable ─SOURCE_AT▶ SourceSpan (the lines around the frame's line)
+#   JavaStackFrame ─HAS_LOCAL▶ JavaLocal (the method's locals)
+
+- name: LogEvent
+  description: "One event in a log file under the world's data/logs: from a line that starts an event to the next, so a logged exception is one event with its whole trace. `severity` is the level on one scale (SEVERE→ERROR, WARNING→WARN). An event that logged a Java exception carries `exception`, `causes`, `rootCause` and a `fingerprint` shared by every event with the same failure at the same frames. Its throwables: HAS_EXCEPTION; its frames: HAS_FRAME."
+  properties:
+    id: { identity: true, description: "`<path>#<line>`." }
+    path: "The log file's path under data/."
+    name: "The log file's name."
+    line: { type: int, description: "First line of the event in the file." }
+    endLine: { type: int, description: "Last line of the event." }
+    exceptionMessage: "The logged exception's message."
+    causes: { cardinality: LIST, description: "Binary names of the exception's causes, in order." }
+    frameCount: { type: int, description: "Frames printed across the trace." }
+    modifiedAt: "When the log file was last written."
+  virtualJoins:
+    - { anchorLabel: AssistantUser, relationship: HAS_LOG_EVENT, keyField: id, recordKeyField: ownerKey, producer: logEvents, maxFanoutTotal: 50000,
+        description: "Every event in the world's logs; narrow with `{severity: 'ERROR'}`, `{hasTrace: true}` or `{fingerprint: '…'}`." }
+
+- name: JavaThrowable
+  parents: [ThrownException]
+  description: "One throwable in a Java stack trace — the one thrown, a cause, or one it suppressed — with its message, how many frames it printed and shares with the one before, and its first frame in a jar under data/jars (`jarFrame`, `jarFrameLine`, `spanKey`): where the application's own code was when it happened. `isRootCause` marks the last cause. The code at that frame: SOURCE_AT."
+  properties:
+    simpleName: "The exception's simple name."
+    frameCount: { type: int, description: "Frames printed for it." }
+    elided: { type: int, description: "Frames it shares with the throwable before it, not printed again (`... n more`)." }
+    depth: { type: int, description: "0 on the chain from the thrown throwable to its root cause; one more inside each suppressed throwable." }
+    parentIndex: { type: int, description: "Index of the throwable this one caused or was suppressed by; empty for the one thrown." }
+    topFrame: "`Class.method` of its first frame."
+    jarFrame: "`Class.method` of its first frame in a jar under data/jars."
+    jarFrameLine: { type: int, description: "That frame's line." }
+    jarPath: "The jar that compiled that frame's class."
+    sourceKey: "That frame's source file key."
+  virtualJoins:
+    - { anchorLabel: StackTrace, relationship: HAS_EXCEPTION, keyField: text, recordKeyField: anchorKey, producer: traceExceptions,
+        description: "The throwables in a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_EXCEPTION]->(x)`." }
+    - { anchorLabel: LogEvent, relationship: HAS_EXCEPTION, keyField: content, recordKeyField: anchorKey, producer: traceExceptions,
+        description: "The throwables a log event logged." }
+
+- name: JavaStackFrame
+  parents: [StackFrame]
+  description: "One frame of a Java stack trace. When a jar under data/jars compiled its class it names that jar (`jarPath`, `inJar`) and carries the jar's own keys, so it reaches the type (IN_TYPE), the method's whole declaration (DECLARED_AT), the lines it was on (SOURCE_AT) and the method's locals (HAS_LOCAL). `firstInJar` marks its throwable's first frame in a jar — usually the code to read first. A JDK or unmounted library frame has no jar."
+  properties:
+    exceptionIndex: { type: int, description: "Which throwable in the trace: 0 is the one thrown." }
+    depth: { type: int, description: "Its throwable's depth: 0 on the thrown one's cause chain." }
+    relation: "`thrown`, `cause` or `suppressed`."
+    isTop: { type: boolean, description: "The throwable's first frame." }
+    firstInJar: { type: boolean, description: "The throwable's first frame in a jar under data/jars." }
+    packageName: "Dotted package of the frame's class."
+    expectedName: "The name the frame's line should show: the method, the class for a constructor, the enclosing method for a lambda."
+    module: "The module or class loader printed before the class."
+    native: { type: boolean, description: "A native method." }
+    location: "What a logging layout appended, e.g. the jar and version."
+    sourcePath: "Package path and file, e.g. `com/x/Cache.java`."
+    jarPath: "The jar under data/jars that compiled the class."
+    jarCandidates: { type: int, description: "Jars under data/jars holding the class." }
+    inJar: { type: boolean, description: "A jar under data/jars compiled the class." }
+    javaTypeId: "`<jar path>!<class>`: the JavaType id."
+  virtualJoins:
+    - { anchorLabel: StackTrace, relationship: HAS_FRAME, keyField: text, recordKeyField: anchorKey, producer: traceFrames,
+        description: "Every frame of a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_FRAME]->(f)`." }
+    - { anchorLabel: LogEvent, relationship: HAS_FRAME, keyField: content, recordKeyField: anchorKey, producer: traceFrames,
+        description: "Every frame of the trace a log event logged." }
+
+# Joins into the code realms, declared with joins only (declarations of one type name merge).
+- name: JavaType
+  virtualJoins:
+    - { anchorLabel: JavaStackFrame, relationship: IN_TYPE, keyField: javaTypeId, recordKeyField: anchorKey, producer: javaTypeByName,
+        description: "The type a frame was running in." }
+
+- name: SourceSpan
+  virtualJoins:
+    - { anchorLabel: JavaStackFrame, relationship: SOURCE_AT, keyField: spanKey, recordKeyField: anchorKey, producer: javaSourceSpan,
+        description: "The lines around the frame's line." }
+    - { anchorLabel: JavaThrowable, relationship: SOURCE_AT, keyField: spanKey, recordKeyField: anchorKey, producer: javaSourceSpan,
+        description: "The lines around the throwable's first frame in a jar." }
+
+- name: JavaDeclaration
+  virtualJoins:
+    - { anchorLabel: JavaStackFrame, relationship: DECLARED_AT, keyField: spanKey, recordKeyField: anchorKey, producer: javaDeclarationAt,
+        description: "The whole declaration around the frame's line: the method that was running. Its `matches` says the source is the jar's version (the method the frame names is the one around the line)." }
+    - { anchorLabel: JavaThrowable, relationship: DECLARED_AT, keyField: spanKey, recordKeyField: anchorKey, producer: javaDeclarationAt,
+        description: "The method around the throwable's first frame in a jar." }
+
+- name: JavaLocal
+  virtualJoins:
+    - { anchorLabel: JavaStackFrame, relationship: HAS_LOCAL, keyField: spanKey, recordKeyField: anchorKey, producer: javaLocalsOfMethod,
+        description: "The local variables of the method the frame was in." }

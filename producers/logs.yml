@@ -1,0 +1,19 @@
+# Logs are read where they are, as events; a stack trace is read from the text that holds it. Both
+# producers are appliance kinds; nothing here knows a library or an application.
+#
+#   logEvents        — the world's data/logs/**: one row per log event, its trace parsed (files, unit: event)
+#   traceExceptions  — a trace's throwables: the one thrown, its causes, what it suppressed
+#   traceFrames      — a trace's frames, each resolved against the jars under data/jars
+
+- name: logEvents
+  kind: files
+  roots: [logs]
+  include: ["**/*.log", "**/*.log.*", "**/*.out", "**/*.txt"]
+  unit: event
+  contentCapKb: 16384
+  maxFiles: 200
+  compute:
+    id: "r.path + '#' + toString(r.line)"
+
+- { name: traceExceptions, kind: stacktrace, emit: exceptions, jars: [jars] }
+- { name: traceFrames,     kind: stacktrace, emit: frames,     jars: [jars] }
