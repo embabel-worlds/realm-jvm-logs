@@ -42,6 +42,7 @@
     jarFrameLine: { type: int, description: "That frame's line." }
     jarPath: "The jar that compiled that frame's class."
     sourceKey: "That frame's source file key."
+    methodAtKey: "`<jar path>!<class>.<method>:<line>` of that frame: the key RAN_IN takes to the method it was in."
   virtualJoins:
     - { anchorLabel: StackTrace, relationship: HAS_EXCEPTION, keyField: text, recordKeyField: anchorKey, producer: traceExceptions,
         description: "The throwables in a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_EXCEPTION]->(x)`." }
@@ -67,6 +68,7 @@
     jarCandidates: { type: int, description: "Jars under data/jars holding the class." }
     inJar: { type: boolean, description: "A jar under data/jars compiled the class." }
     javaTypeId: "`<jar path>!<class>`: the JavaType id."
+    methodAtKey: "`<jar path>!<class>.<method>:<line>`: the key RAN_IN takes to the one method whose line table holds the frame's line."
   virtualJoins:
     - { anchorLabel: StackTrace, relationship: HAS_FRAME, keyField: text, recordKeyField: anchorKey, producer: traceFrames,
         description: "Every frame of a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_FRAME]->(f)`." }
@@ -74,6 +76,13 @@
         description: "Every frame of the trace a log event logged." }
 
 # Joins into the code realms, declared with joins only (declarations of one type name merge).
+- name: JavaMethod
+  virtualJoins:
+    - { anchorLabel: JavaStackFrame, relationship: RAN_IN, keyField: methodAtKey, recordKeyField: anchorKey, producer: javaMethodAt,
+        description: "The method the frame was running: the one whose line table holds the frame's line, so an overload or a constructor that starts at a field initializer is still the right one." }
+    - { anchorLabel: JavaThrowable, relationship: RAN_IN, keyField: methodAtKey, recordKeyField: anchorKey, producer: javaMethodAt,
+        description: "The method the throwable's first frame in a jar was running." }
+
 - name: JavaType
   virtualJoins:
     - { anchorLabel: JavaStackFrame, relationship: IN_TYPE, keyField: javaTypeId, recordKeyField: anchorKey, producer: javaTypeByName,

@@ -87,13 +87,11 @@
   description: >-
     Who else calls the methods that failed: for each logged failure, the method its first frame in a
     jar was in, every call to it from the jar's code, and whether the failure came through that
-    caller (`onFailingPath`) - the other callers are paths that have not failed yet. A method with
-    overloads is the one declared last at or before the failing line.
+    caller (`onFailingPath`) - the other callers are paths that have not failed yet. The method is the
+    one whose line table holds the failing line (RAN_IN), so overloads and constructors resolve exactly.
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {firstInJar: true, depth: 0})
-    MATCH (f)-[:IN_TYPE]->(t:JavaType)-[:DECLARES_METHOD]->(m:JavaMethod) WHERE m.name = f.method AND m.line <= f.line
-    WITH e, f, m ORDER BY m.line DESC
-    WITH e, f, head(collect(m)) AS m
+    MATCH (f)-[:RAN_IN]->(m:JavaMethod)
     MATCH (e)-[:HAS_FRAME]->(tf:JavaStackFrame {depth: 0})
     WITH e, f, m, collect(tf.className + '.' + tf.method) AS path
     MATCH (m)-[:CALLED_BY]->(c:JavaMethodCall)
@@ -159,9 +157,7 @@
     methods. `sourceMatches` false means the source read is not the jar's version.
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true, depth: 0})
-    MATCH (f)-[:IN_TYPE]->(t:JavaType)-[:DECLARES_METHOD]->(m:JavaMethod) WHERE m.name = f.method AND m.line <= f.line
-    WITH f, m ORDER BY m.line DESC
-    WITH f, head(collect(m)) AS m
+    MATCH (f)-[:RAN_IN]->(m:JavaMethod)
     OPTIONAL MATCH (f)-[:DECLARED_AT]->(d:JavaDeclaration)
     OPTIONAL MATCH (m)-[:MAKES_CALL]->(c:JavaMethodCall)
     WITH f, m, d, count(DISTINCT c) AS calls
