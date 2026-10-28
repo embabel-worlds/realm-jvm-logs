@@ -20,6 +20,7 @@
     name: "The log file's name."
     line: { type: int, description: "First line of the event in the file." }
     endLine: { type: int, description: "Last line of the event." }
+    content: "The event's whole text, its trace included: the key HAS_EXCEPTION and HAS_FRAME hand the `stacktrace` producer."
     exceptionMessage: "The logged exception's message."
     causes: { cardinality: LIST, description: "Binary names of the exception's causes, in order." }
     frameCount: { type: int, description: "Frames printed across the trace." }
@@ -32,6 +33,11 @@
   parents: [ThrownException]
   description: "One throwable in a Java stack trace — the one thrown, a cause, or one it suppressed — with its message, how many frames it printed and shares with the one before, and its first frame in a jar under data/jars (`jarFrame`, `jarFrameLine`, `spanKey`): where the application's own code was when it happened. `isRootCause` marks the last cause. The code at that frame: SOURCE_AT."
   properties:
+    # `id` and `spanKey` are ThrownException's, restated: a type's identity and its join keys are read
+    # from its own declaration, so a parent's do not count for them, and without realm-code-model the
+    # parent is not there at all.
+    id: { identity: true, description: "`<traceId>#<index>`: the trace's id (a hash of its text, so the same text is the same trace) and the throwable's index in it." }
+    spanKey: "`<sourceKey>#<line>#<name>` of its first frame in a jar under data/jars: the key SOURCE_AT and DECLARED_AT take. Absent when no frame is in a jar, or that frame names no line."
     simpleName: "The exception's simple name."
     frameCount: { type: int, description: "Frames printed for it." }
     elided: { type: int, description: "Frames it shares with the throwable before it, not printed again (`... n more`)." }
@@ -53,6 +59,9 @@
   parents: [StackFrame]
   description: "One frame of a Java stack trace. When a jar under data/jars compiled its class it names that jar (`jarPath`, `inJar`) and carries the jar's own keys, so it reaches the type (IN_TYPE), the method's whole declaration (DECLARED_AT), the lines it was on (SOURCE_AT) and the method's locals (HAS_LOCAL). `firstInJar` marks its throwable's first frame in a jar — usually the code to read first. A JDK or unmounted library frame has no jar."
   properties:
+    # `id` and `spanKey` are StackFrame's, restated, for the reason JavaThrowable gives.
+    id: { identity: true, description: "`<traceId>#<exceptionIndex>.<frame>`: the trace's id (a hash of its text), the throwable's index and the frame's position in it." }
+    spanKey: "`<sourceKey>#<line>#<expectedName>`: the key SOURCE_AT, DECLARED_AT and HAS_LOCAL take. Absent when no jar under data/jars compiled the class, or the frame names no line (`Unknown Source`, native)."
     exceptionIndex: { type: int, description: "Which throwable in the trace: 0 is the one thrown." }
     depth: { type: int, description: "Its throwable's depth: 0 on the thrown one's cause chain." }
     relation: "`thrown`, `cause` or `suppressed`."
