@@ -2,6 +2,8 @@
 
 A JVM application's logs and stack traces, read to the code that failed. Nothing is ingested.
 
+**Install [realm-code-model](https://github.com/embabel-worlds/realm-code-model) with it.** This realm's types extend parents declared there (`StackFrame`, `ThrownException`). Without it the realm still loads, but its types lose those parents, so a query that names a parent finds none of its rows.
+
 - **Logs**: every file under the world's `data/logs` (`*.log`, `*.out`, `*.txt`) is read live, one
   row per event (`LogEvent`): timestamp, level, a `severity` on one scale, thread, logger, message,
   and — for an event that logged an exception — the exception, its causes, its root cause and a
