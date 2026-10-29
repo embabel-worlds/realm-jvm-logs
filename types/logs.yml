@@ -21,9 +21,19 @@
     line: { type: int, description: "First line of the event in the file." }
     endLine: { type: int, description: "Last line of the event." }
     content: "The event's whole text, its trace included: the key HAS_EXCEPTION and HAS_FRAME hand the `stacktrace` producer."
+    timestamp: "The date-time or time the event's line starts with, as the log printed it; empty when its layout has none."
+    level: "The level as the log printed it, upper-cased: `INFO`, `WARNING`, `SEVERE`, …"
+    severity: "The level on one scale: TRACE, DEBUG, INFO, WARN, ERROR or FATAL (SEVERE→ERROR, WARNING→WARN, FINE→DEBUG, CONFIG→INFO). Empty when no level was read."
+    thread: "The thread the layout printed in brackets, when it printed one."
+    logger: "The logger (usually a class name) the layout printed, when it printed one."
+    message: "The message on the event's first line, or the whole first line when no layout read it."
+    hasTrace: { type: boolean, description: "The event logged a Java stack trace." }
+    exception: "Binary name of the exception the event logged."
     exceptionMessage: "The logged exception's message."
     causes: { cardinality: LIST, description: "Binary names of the exception's causes, in order." }
+    rootCause: "Binary name of the last cause: the exception itself when it has none."
     frameCount: { type: int, description: "Frames printed across the trace." }
+    fingerprint: "Shared by every event with the same failure from the same frames: group by it to count one failure."
     modifiedAt: "When the log file was last written."
   virtualJoins:
     - { anchorLabel: AssistantUser, relationship: HAS_LOG_EVENT, keyField: id, recordKeyField: ownerKey, producer: logEvents, maxFanoutTotal: 50000,
