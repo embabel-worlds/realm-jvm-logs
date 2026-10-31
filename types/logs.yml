@@ -1,9 +1,16 @@
 # Logs and stack traces, read to code. Every node is VIRTUAL.
 #
-#   AssistantUser ─HAS_LOG_EVENT▶ LogEvent                  (data/logs/**, one row per event)
+#   AssistantUser ─HAS_LOG_EVENT▶ JvmLogEvent               (data/logs/**, one row per event)
 #   StackTrace {text: $trace} ─HAS_EXCEPTION▶ JavaThrowable  (a pasted trace; StackTrace is a literal anchor)
-#   StackTrace / LogEvent ─HAS_FRAME▶ JavaStackFrame
-#   LogEvent ─HAS_EXCEPTION▶ JavaThrowable
+#   StackTrace / JvmLogEvent ─HAS_FRAME▶ JavaStackFrame
+#   JvmLogEvent ─HAS_EXCEPTION▶ JavaThrowable
+#
+# `:LogEvent` reads every log system; `:JvmLogEvent` reads this one. The world declares LogEvent
+# (default-world config/types/logs.yml) as the CONTRACT every log realm's events carry — timestamp,
+# level, severity, thread, logger, message, content, hasTrace, exception, rootCause, fingerprint —
+# and this realm's child carries it under the shared label, so `(me)-[:HAS_LOG_EVENT]->(e:LogEvent)`
+# is answered here and `(e:JvmLogEvent)` here alone. Until 0.2.0 this realm declared a type NAMED
+# LogEvent, which merged with the world's by name and shadowed the contract instead of implementing it.
 #
 # and on into realm-java-code and realm-java-source-code, by the keys a frame carries when a jar
 # under data/jars compiled its class (spelled as that jar's own rows spell them):
@@ -12,8 +19,17 @@
 #   JavaStackFrame / JavaThrowable ─SOURCE_AT▶ SourceSpan (the lines around the frame's line)
 #   JavaStackFrame ─HAS_LOCAL▶ JavaLocal (the method's locals)
 
-- name: LogEvent
-  description: "One event in a log file under the world's data/logs: from a line that starts an event to the next, so a logged exception is one event with its whole trace. `severity` is the level on one scale (SEVERE→ERROR, WARNING→WARN). An event that logged a Java exception carries `exception`, `causes`, `rootCause` and a `fingerprint` shared by every event with the same failure at the same frames. Its throwables: HAS_EXCEPTION; its frames: HAS_FRAME."
+# The JVM child of the world's LogEvent. The contract's properties are inherited and need no `compute:`:
+# the `files` kind's `unit: event` rows (engine LogEvents) already spell every one of them as the contract
+# does — timestamp, level, severity, thread, logger, message, content, hasTrace, exception, rootCause,
+# fingerprint — and the producer computes only `id`. Which are null, and why: `timestamp`, `level`,
+# `severity`, `thread` and `logger` when the event's leading line matches no known layout (a program's bare
+# stderr), in which case `message` is that line; `exception`, `rootCause` and `fingerprint` when the event
+# logged no Java trace (`hasTrace` false). Description and identity are restated because a child inherits
+# properties and labels, not those; visibility and userAnchor are the defaults, as on the world's LogEvent.
+- name: JvmLogEvent
+  parents: [LogEvent]
+  description: "One event in a log file under the world's data/logs, a JVM application's: from a line that starts an event to the next, so a logged exception is one event with its whole trace. It is a LogEvent: name :LogEvent to read every log system, :JvmLogEvent for these files. `severity` is the level on one scale (SEVERE→ERROR, WARNING→WARN). An event that logged a Java exception carries `exception`, `causes`, `rootCause` and a `fingerprint` shared by every event with the same failure at the same frames. Its throwables: HAS_EXCEPTION; its frames: HAS_FRAME."
   properties:
     id: { identity: true, description: "`<path>#<line>`." }
     path: "The log file's path under data/."
@@ -62,7 +78,10 @@
   virtualJoins:
     - { anchorLabel: StackTrace, relationship: HAS_EXCEPTION, keyField: text, recordKeyField: anchorKey, producer: traceExceptions,
         description: "The throwables in a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_EXCEPTION]->(x)`." }
-    - { anchorLabel: LogEvent, relationship: HAS_EXCEPTION, keyField: content, recordKeyField: anchorKey, producer: traceExceptions,
+    # Anchored on the CHILD: a query that reaches the event through HAS_LOG_EVENT and names `:LogEvent` is
+    # specialised to JvmLogEvent by the planner (engine AncestorLabelSpecialization), so either spelling
+    # matches this anchor, while `(e:JvmLogEvent)-[:HAS_EXCEPTION]->` would miss an anchor spelled LogEvent.
+    - { anchorLabel: JvmLogEvent, relationship: HAS_EXCEPTION, keyField: content, recordKeyField: anchorKey, producer: traceExceptions,
         description: "The throwables a log event logged." }
 
 - name: JavaStackFrame
@@ -91,7 +110,7 @@
   virtualJoins:
     - { anchorLabel: StackTrace, relationship: HAS_FRAME, keyField: text, recordKeyField: anchorKey, producer: traceFrames,
         description: "Every frame of a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_FRAME]->(f)`." }
-    - { anchorLabel: LogEvent, relationship: HAS_FRAME, keyField: content, recordKeyField: anchorKey, producer: traceFrames,
+    - { anchorLabel: JvmLogEvent, relationship: HAS_FRAME, keyField: content, recordKeyField: anchorKey, producer: traceFrames,
         description: "Every frame of the trace a log event logged." }
 
 # Joins into the code realms, declared with joins only (declarations of one type name merge).
