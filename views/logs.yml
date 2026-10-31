@@ -1,5 +1,13 @@
 # Questions answered from logs and stack traces, read to the code. No view names a library or an
 # application: what a trace touches is whatever the jars under data/jars compiled.
+#
+# The log views write `(me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent …)`, the PARENT label, on
+# purpose. The rows are this realm's JvmLogEvent (types/logs.yml, `parents: [LogEvent]`), reached
+# through its own join; the planner specialises a parent reached through an edge to the child that has
+# the join (engine AncestorLabelSpecialization), so `:LogEvent` reads exactly these rows and the HAS_FRAME /
+# HAS_EXCEPTION hops anchored on JvmLogEvent still bind. Naming the parent keeps each view a view over
+# LOG EVENTS that reads correctly now and would read another realm's events too were one to answer to
+# HAS_LOG_EVENT; nothing in these bodies depends on a property only JvmLogEvent has.
 
 - name: JvmStackTraceCode
   description: >-
