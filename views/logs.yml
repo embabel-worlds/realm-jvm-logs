@@ -3,11 +3,12 @@
 
 - name: JvmStackTraceCode
   description: >-
-    The offending code for a Java stack trace: each throwable in it (thrown, causes, suppressed),
-    with every frame in a jar under data/jars, the method's whole declaration and the lines it was
-    on. `offending` marks each throwable's first frame in a jar - read those first.
+    The code each frame of a pasted Java stack trace ran, read from its jar. Each throwable in it
+    (thrown, causes, suppressed), with every frame in a jar under data/jars, the method's whole
+    declaration and the lines it was on. Only frames in a jar under data/jars: JDK and unmounted
+    library frames are left out. `offending` marks each throwable's first frame in a jar - read those first.
   params:
-    trace: { type: string, description: "The stack trace, as printed." }
+    trace: { type: string, required: true, description: "The stack trace, as printed." }
   cypher: |
     MATCH (t:StackTrace {text: $trace})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true})
     OPTIONAL MATCH (f)-[:SOURCE_AT]->(s:SourceSpan)
@@ -20,11 +21,12 @@
 
 - name: JvmStackTraceSummary
   description: >-
-    What a Java stack trace says, throwable by throwable: the exception and its message, whether it
-    is the root cause, where it was thrown, and the first frame in a jar under data/jars with the
-    lines around it.
+    What a pasted Java stack trace says, one row per throwable. The exception and its message,
+    whether it is the root cause, where it was thrown, and the first frame in a jar under data/jars
+    with the lines around it. Only that one frame per throwable; for every frame use
+    JvmStackTraceCode.
   params:
-    trace: { type: string, description: "The stack trace, as printed." }
+    trace: { type: string, required: true, description: "The stack trace, as printed." }
   cypher: |
     MATCH (t:StackTrace {text: $trace})-[:HAS_EXCEPTION]->(x:JavaThrowable)
     OPTIONAL MATCH (x)-[:SOURCE_AT]->(s:SourceSpan)
@@ -37,9 +39,10 @@
 
 - name: JvmLogFailures
   description: >-
-    The failures the logs recorded, grouped by fingerprint (same exception, same root cause, same
-    frames): how often each happened, first and last seen, the loggers that reported it and where
-    in the logs. The most frequent first.
+    The logged failures by fingerprint: how often, first and last seen, where. A fingerprint is the
+    same exception, root cause and frames; each row gives the loggers that reported it and up to five
+    places in the logs. Only events that logged a Java stack trace; the most frequent first, up to
+    `limit`.
   params:
     limit: { type: int, default: 25, description: "Maximum failures." }
   cypher: |
@@ -53,8 +56,10 @@
 
 - name: JvmLogFailureCode
   description: >-
-    The code behind the failures in the logs: for each logged exception (or the one fingerprint
-    asked for), the root cause, the first frame of it in a jar under data/jars, and the lines there.
+    The code behind each logged failure: its root cause and the lines it came from. For each
+    logged exception (or the one fingerprint asked for), the root cause, the first frame of it in a
+    jar under data/jars, and the lines there. Newest first, up to `limit` events; an event whose root
+    cause has no frame in a jar shows no code.
   params:
     fingerprint: { type: string, default: "", description: "One failure's fingerprint (from JvmLogFailures); empty = every logged failure." }
     limit: { type: int, default: 25, description: "Maximum events." }
@@ -72,8 +77,9 @@
 
 - name: JvmLogLevels
   description: >-
-    The logs by severity and logger: how many events each logger wrote at each level, and how many
-    carried a stack trace - where the noise and the failures come from.
+    Event counts per severity and logger, with how many carried a stack trace. Where the noise and
+    the failures come from. Counts every event in every log under data/logs, not windowed by time; an
+    event whose layout printed no level or logger is counted under an empty severity or logger.
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent)
     RETURN e.severity AS severity, e.logger AS logger, count(*) AS events,
@@ -85,8 +91,8 @@
 
 - name: JvmFailureCallers
   description: >-
-    Who else calls the methods that failed: for each logged failure, the method its first frame in a
-    jar was in, every call to it from the jar's code, and whether the failure came through that
+    Every caller of each method a logged failure was thrown from. For each logged failure, the method
+    its first frame in a jar was in, every call to it from the jar's code, and whether the failure came through that
     caller (`onFailingPath`) - the other callers are paths that have not failed yet. The method is the
     one whose line table holds the failing line (RAN_IN), so overloads and constructors resolve exactly.
   cypher: |
@@ -103,11 +109,13 @@
 
 - name: JvmThrowSiteCoverage
   description: >-
-    How much of a failure the logs have seen: for each exception the logs name as a root cause, how
-    many places in the jar construct it and at how many of those the logs show it failing. A large
+    Per logged root-cause exception: where the jar throws it, and where it was seen. For each
+    exception the logs name as a root cause, how many places in the jar construct it and at how many
+    of those the logs show it failing. Only exceptions some log already shows; a construction site
+    is a `new` of the exact class, not of a subclass. A large
     gap is code that throws the same way and has not been seen to.
   params:
-    jar: { type: string, description: "The application's jar under data/, e.g. `jars/app-1.0.jar`." }
+    jar: { type: string, required: true, description: "The application's jar under data/, exactly as its path, e.g. `jars/app-1.0.jar`." }
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true})
     WITH collect(DISTINCT f.className + ':' + toString(f.line)) AS seen, collect(DISTINCT e.rootCause) AS causes
@@ -120,12 +128,12 @@
 
 - name: JvmUnseenThrowSites
   description: >-
-    Every place the jar constructs one exception, with the message it would carry as written, and
-    whether the logs have seen it fail there - the ones not seen are where the same failure is
-    still waiting.
+    Where the jar constructs one exception, and whether the logs saw it fail there. Every place, with
+    the message it would carry as written, and whether the logs have seen it fail there - the ones not seen are where the same failure is
+    still waiting. Exact class only (not subclasses); up to `limit` sites, seen ones first.
   params:
-    jar: { type: string, description: "The application's jar under data/." }
-    exception: { type: string, description: "Binary name of the exception, e.g. `java.lang.IllegalStateException` (from JvmThrowSiteCoverage)." }
+    jar: { type: string, required: true, description: "The application's jar under data/, exactly as its path, e.g. `jars/app-1.0.jar`." }
+    exception: { type: string, required: true, description: "Binary name of the exception, e.g. `java.lang.IllegalStateException` (from JvmThrowSiteCoverage)." }
     limit: { type: int, default: 50, description: "Maximum sites." }
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true})
@@ -139,7 +147,7 @@
 
 - name: JvmFailureLocals
   description: >-
-    The locals declared in each failing method before the failing line, with their types as written
+    The locals each failing method declared before the failing line. With their types as written
     and what they were given - the values to log or inspect next time. Declared before the line is
     not proof of being in scope there: a block or pattern variable may have ended.
   cypher: |
@@ -152,8 +160,9 @@
 
 - name: JvmFailingMethodShape
   description: >-
-    The shape of each method a logged failure ran through in the jar: its length in lines, the calls
-    it makes, the field reads and writes, and its locals - whether failures sit in the long, busy
+    Size, calls, field accesses and locals of each method a logged failure ran in. Its length in
+    lines, the calls it makes, the field reads and writes, and its locals, for methods in a jar under
+    data/jars on the thrown throwable's cause chain (not suppressed ones) - whether failures sit in the long, busy
     methods. `sourceMatches` false means the source read is not the jar's version.
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {inJar: true, depth: 0})
