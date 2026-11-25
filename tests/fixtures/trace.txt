@@ -1,0 +1,14 @@
+Exception in thread "main" java.lang.IllegalStateException: Could not start the shop
+	at com.acme.shop.App.start(App.java:42)
+	at com.acme.shop.App.main(App.java:17)
+	Suppressed: java.io.UncheckedIOException: close failed
+		at com.acme.shop.Pool.close(Pool.java:88)
+		... 2 more
+Caused by: java.lang.IllegalArgumentException: bad port
+	at com.acme.shop.Config.port(Config.java:23)
+	at com.acme.shop.App.start(App.java:40)
+	... 1 more
+Caused by: java.lang.NumberFormatException: For input string: "abc"
+	at java.base/java.lang.Integer.parseInt(Integer.java:652)
+	at com.acme.shop.Config.port(Config.java:21)
+	... 2 more

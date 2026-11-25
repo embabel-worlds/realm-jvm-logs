@@ -1,0 +1,6 @@
+[
+  {"index": 0, "relation": "thrown",     "depth": 0, "of": null, "exception": "java.lang.IllegalStateException",    "message": "Could not start the shop",  "rootCause": false, "thrownAt": "com.acme.shop.App.start",     "frames": 2, "elided": 0},
+  {"index": 1, "relation": "suppressed", "depth": 1, "of": 0,    "exception": "java.io.UncheckedIOException",       "message": "close failed",              "rootCause": false, "thrownAt": "com.acme.shop.Pool.close",    "frames": 1, "elided": 2},
+  {"index": 2, "relation": "cause",      "depth": 0, "of": 0,    "exception": "java.lang.IllegalArgumentException", "message": "bad port",                  "rootCause": false, "thrownAt": "com.acme.shop.Config.port",   "frames": 2, "elided": 1},
+  {"index": 3, "relation": "cause",      "depth": 0, "of": 2,    "exception": "java.lang.NumberFormatException",    "message": "For input string: \"abc\"", "rootCause": true,  "thrownAt": "java.lang.Integer.parseInt",  "frames": 2, "elided": 2}
+]

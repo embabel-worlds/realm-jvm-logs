@@ -13,7 +13,7 @@
 #   JavaStackFrame ─HAS_LOCAL▶ JavaLocal (the method's locals)
 
 - name: LogEvent
-  description: "One event in a log file under the world's data/logs: from a line that starts an event to the next, so a logged exception is one event with its whole trace. `severity` is the level on one scale (SEVERE→ERROR, WARNING→WARN). An event that logged a Java exception carries `exception`, `causes`, `rootCause` and a `fingerprint` shared by every event with the same failure at the same frames. Its throwables: HAS_EXCEPTION; its frames: HAS_FRAME."
+  description: "One event in a log file under the world's data/logs, identified by `id` (`<path>#<line>` of its first line): from a line that starts an event to the next, so a logged exception is one event with its whole trace. Read live from the file on every query. `severity` is the level on one scale (SEVERE→ERROR, WARNING→WARN). An event that logged a Java exception carries `exception`, `causes`, `rootCause` and a `fingerprint` shared by every event with the same failure at the same frames. Its throwables: HAS_EXCEPTION; its frames: HAS_FRAME."
   properties:
     id: { identity: true, description: "`<path>#<line>`." }
     path: "The log file's path under data/."
@@ -34,14 +34,25 @@
     rootCause: "Binary name of the last cause: the exception itself when it has none."
     frameCount: { type: int, description: "Frames printed across the trace." }
     fingerprint: "Shared by every event with the same failure from the same frames: group by it to count one failure."
-    modifiedAt: "When the log file was last written."
+    modifiedAt: "When the log file holding the event was last written: the filesystem's clock, ISO-8601 UTC (`2026-11-25T09:14:03Z`). Not the event's own time; that is `timestamp`."
+  examples:
+    - q: "Which failures did the logs record most often?"
+      cypher: |
+        MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})
+        RETURN e.fingerprint AS fingerprint, e.rootCause AS rootCause, count(*) AS occurrences
+        ORDER BY occurrences DESC LIMIT 10
+    - q: "Where in our code was each logged error's root cause thrown?"
+      cypher: |
+        MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {severity: 'ERROR', hasTrace: true})
+        MATCH (e)-[:HAS_EXCEPTION]->(x:JavaThrowable {isRootCause: true})
+        RETURN e.path AS file, e.line AS line, x.exception AS rootCause, x.jarFrame AS inYourCode, x.jarFrameLine AS at
   virtualJoins:
     - { anchorLabel: AssistantUser, relationship: HAS_LOG_EVENT, keyField: id, recordKeyField: ownerKey, producer: logEvents, maxFanoutTotal: 50000,
         description: "Every event in the world's logs; narrow with `{severity: 'ERROR'}`, `{hasTrace: true}` or `{fingerprint: '…'}`." }
 
 - name: JavaThrowable
   parents: [ThrownException]
-  description: "One throwable in a Java stack trace — the one thrown, a cause, or one it suppressed — with its message, how many frames it printed and shares with the one before, and its first frame in a jar under data/jars (`jarFrame`, `jarFrameLine`, `spanKey`): where the application's own code was when it happened. `isRootCause` marks the last cause. The code at that frame: SOURCE_AT."
+  description: "One throwable in a Java stack trace — the one thrown, a cause, or one it suppressed — identified by `id` (`<traceId>#<index>`), with its message, how many frames it printed and shares with the one before, and its first frame in a jar under data/jars (`jarFrame`, `jarFrameLine`, `spanKey`): where the application's own code was when it happened. `isRootCause` marks the last cause. The code at that frame: SOURCE_AT."
   properties:
     # `id` and `spanKey` are ThrownException's, restated: a type's identity and its join keys are read
     # from its own declaration, so a parent's do not count for them, and without realm-code-model the
@@ -51,7 +62,7 @@
     simpleName: "The exception's simple name."
     frameCount: { type: int, description: "Frames printed for it." }
     elided: { type: int, description: "Frames it shares with the throwable before it, not printed again (`... n more`)." }
-    depth: { type: int, description: "0 on the chain from the thrown throwable to its root cause; one more inside each suppressed throwable." }
+    depth: { type: int, description: "Nesting level, a count in units of suppression: 0 on the chain from the thrown throwable to its root cause; one more inside each suppressed throwable." }
     parentIndex: { type: int, description: "Index of the throwable this one caused or was suppressed by; empty for the one thrown." }
     topFrame: "`Class.method` of its first frame."
     jarFrame: "`Class.method` of its first frame in a jar under data/jars."
@@ -67,14 +78,14 @@
 
 - name: JavaStackFrame
   parents: [StackFrame]
-  description: "One frame of a Java stack trace. When a jar under data/jars compiled its class it names that jar (`jarPath`, `inJar`) and carries the jar's own keys, so it reaches the type (IN_TYPE), the method's whole declaration (DECLARED_AT), the lines it was on (SOURCE_AT) and the method's locals (HAS_LOCAL). `firstInJar` marks its throwable's first frame in a jar — usually the code to read first. A JDK or unmounted library frame has no jar."
+  description: "One frame of a Java stack trace, identified by `id` (`<traceId>#<exceptionIndex>.<frame>`). When a jar under data/jars compiled its class it names that jar (`jarPath`, `inJar`) and carries the jar's own keys, so it reaches the type (IN_TYPE), the method's whole declaration (DECLARED_AT), the lines it was on (SOURCE_AT) and the method's locals (HAS_LOCAL). `firstInJar` marks its throwable's first frame in a jar — usually the code to read first. A JDK or unmounted library frame has no jar."
   properties:
     # `id` and `spanKey` are StackFrame's, restated, for the reason JavaThrowable gives.
     id: { identity: true, description: "`<traceId>#<exceptionIndex>.<frame>`: the trace's id (a hash of its text), the throwable's index and the frame's position in it." }
     spanKey: "`<sourceKey>#<line>#<expectedName>`: the key SOURCE_AT, DECLARED_AT and HAS_LOCAL take. Absent when no jar under data/jars compiled the class, or the frame names no line (`Unknown Source`, native)."
     exceptionIndex: { type: int, description: "Which throwable in the trace: 0 is the one thrown." }
-    depth: { type: int, description: "Its throwable's depth: 0 on the thrown one's cause chain." }
-    relation: "`thrown`, `cause` or `suppressed`."
+    depth: { type: int, description: "Its throwable's nesting level, a count in units of suppression: 0 on the thrown one's cause chain, one more inside each suppressed throwable." }
+    relation: { values: [thrown, cause, suppressed], description: "How its throwable relates to the trace: `thrown` (the top one), `cause` (on its cause chain) or `suppressed`." }
     isTop: { type: boolean, description: "The throwable's first frame." }
     firstInJar: { type: boolean, description: "The throwable's first frame in a jar under data/jars." }
     packageName: "Dotted package of the frame's class."
@@ -88,6 +99,13 @@
     inJar: { type: boolean, description: "A jar under data/jars compiled the class." }
     javaTypeId: "`<jar path>!<class>`: the JavaType id."
     methodAtKey: "`<jar path>!<class>.<method>:<line>`: the key RAN_IN takes to the one method whose line table holds the frame's line."
+  examples:
+    - q: "Which of our methods were the logged failures in, and what is their code?"
+      cypher: |
+        MATCH (me:AssistantUser)-[:HAS_LOG_EVENT]->(e:LogEvent {hasTrace: true})-[:HAS_FRAME]->(f:JavaStackFrame {firstInJar: true})
+        OPTIONAL MATCH (f)-[:DECLARED_AT]->(d:JavaDeclaration)
+        RETURN DISTINCT f.exception AS exception, f.className + '.' + f.method AS method, f.line AS line,
+               d.signature AS declaration, d.text AS code
   virtualJoins:
     - { anchorLabel: StackTrace, relationship: HAS_FRAME, keyField: text, recordKeyField: anchorKey, producer: traceFrames,
         description: "Every frame of a pasted trace: `MATCH (t:StackTrace {text: $trace})-[:HAS_FRAME]->(f)`." }
@@ -95,6 +113,10 @@
         description: "Every frame of the trace a log event logged." }
 
 # Joins into the code realms, declared with joins only (declarations of one type name merge).
+# These five carry no description and no properties on purpose. realm-java-code and
+# realm-java-source-code own the types: the owner of a name is its first declaration with any
+# property, and only the owner's description and identity are read. A description here would be read
+# by nothing, and a property here could make this extension the owner when it loads first.
 - name: JavaMethod
   virtualJoins:
     - { anchorLabel: JavaStackFrame, relationship: RAN_IN, keyField: methodAtKey, recordKeyField: anchorKey, producer: javaMethodAt,
